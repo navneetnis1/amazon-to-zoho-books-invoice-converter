@@ -131,6 +131,7 @@ const convertInvoice = async (req, res) => {
   for (var i = 0; i < source.length; i++) {
     if (source[i]["Transaction Type"] == "Shipment") {
       var oneRow = {
+        "Seller Gstin": source[i]["Seller Gstin"],
         "Invoice Number": "24-25/" + source[i]["Invoice Number"],
         "Invoice Date": moment(new Date(source[i]["Invoice Date"])).format(
           "YYYY-MM-DD"
@@ -161,6 +162,7 @@ const convertInvoice = async (req, res) => {
       invoices.push(oneRow);
     } else if (source[i]["Transaction Type"] == "Refund") {
       var oneRow = {
+        "Seller Gstin": source[i]["Seller Gstin"],
         "Credit Note Number": "24-25/" + source[i]["Credit Note No"],
         "Credit Note Date": moment(
           new Date(source[i]["Credit Note Date"])
