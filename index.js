@@ -129,19 +129,19 @@ const convertInvoice = async (req, res) => {
   const appliedCreditNotes = []; // filtered data
 
   for (var i = 0; i < source.length; i++) {
-    let branchName =
+    let locationName =
       source[i]["Seller Gstin"] == "08BAAPC6813L2ZR"
         ? "Rajasthan"
         : source[i]["Seller Gstin"] == "29BAAPC6813L1ZO"
-        ? "Karnataka"
-        : "";
+          ? "Karnataka"
+          : "";
 
     if (source[i]["Transaction Type"] == "Shipment") {
       var oneRow = {
-        "Branch Name": branchName,
+        "Location Name": locationName,
         "Invoice Number": "25-26/" + source[i]["Invoice Number"],
         "Invoice Date": moment(new Date(source[i]["Invoice Date"])).format(
-          "YYYY-MM-DD"
+          "YYYY-MM-DD",
         ),
         "Place of Supply": await stateCodeGenerater(source[i]["Ship To State"]),
         "Invoice Status": "overdue",
@@ -155,7 +155,7 @@ const convertInvoice = async (req, res) => {
           ? source[i]["Customer Bill To Gstid"]
           : "",
         "Due Date": moment(new Date(source[i]["Invoice Date"])).format(
-          "YYYY-MM-DD"
+          "YYYY-MM-DD",
         ),
         "Item Name": source[i]["Item Description"],
         SKU: source[i]["Sku"],
@@ -169,10 +169,10 @@ const convertInvoice = async (req, res) => {
       invoices.push(oneRow);
     } else if (source[i]["Transaction Type"] == "Refund") {
       var oneRow = {
-        "Branch Name": branchName,
+        "Location Name": locationName,
         "Credit Note Number": "25-26/" + source[i]["Credit Note No"],
         "Credit Note Date": moment(
-          new Date(source[i]["Credit Note Date"])
+          new Date(source[i]["Credit Note Date"]),
         ).format("YYYY-MM-DD"),
         "Invoice#": "25-26/" + source[i]["Invoice Number"],
         "Place of Supply": await stateCodeGenerater(source[i]["Ship To State"]),
@@ -193,18 +193,18 @@ const convertInvoice = async (req, res) => {
         "HSN/SAC": source[i]["Hsn/sac"],
         Quantity: source[i]["Quantity"],
         "Item Price": Math.abs(
-          source[i]["Tax Exclusive Gross"] / source[i]["Quantity"]
+          source[i]["Tax Exclusive Gross"] / source[i]["Quantity"],
         ),
       };
 
       var creditRow = {
         "Credit Note Number": "25-26/" + source[i]["Credit Note No"],
         Date: moment(new Date(source[i]["Credit Note Date"])).format(
-          "YYYY-MM-DD"
+          "YYYY-MM-DD",
         ),
         "Invoice Number": "25-26/" + source[i]["Invoice Number"],
         "Associated Invoice Date": moment(
-          new Date(source[i]["Invoice Date"])
+          new Date(source[i]["Invoice Date"]),
         ).format("YYYY-MM-DD"),
 
         Amount: Math.abs(source[i]["Invoice Amount"]),
