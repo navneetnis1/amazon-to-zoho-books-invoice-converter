@@ -4,7 +4,8 @@
   "description": "import amazon invoices in zoho",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "nodemon index.js",
+    "test": "node --test converter.test.js"
   },
   "author": "Navneet Choudhary",
   "license": "ISC",

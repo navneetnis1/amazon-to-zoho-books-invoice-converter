@@ -56,10 +56,11 @@ const stateCodeGenerater = async (stateName) => {
     LADAKH: "LA",
     "Other Territory": "OT",
   };
-  upperStateName = stateName.toUpperCase();
+  const upperStateName = stateName.trim().toUpperCase();
   return stateCodeMap[upperStateName] || "Unknown"; // Return 'Unknown' if state not found
 };
 const amazonInvoiceCheck = async (req, res, next) => {
+  if (!req.file) return res.status(400).json({ errors: ["Upload a CSV using the file field"] });
   const fileName = req.file.path;
   const schema = Joi.object({
     "Transaction Type": Joi.string().required(),
@@ -96,30 +97,34 @@ const amazonInvoiceCheck = async (req, res, next) => {
     });
 };
 
-function jsonToCSV(jsonData) {
-  try {
-    const csv = parse(jsonData);
-    return csv;
-  } catch (err) {
-    console.error(err);
-    return "";
-  }
+function financialYearPrefix(date) {
+  const parsed = moment(date, ["YYYY-MM-DD HH:mm:ss", "YYYY-MM-DD"], true);
+  if (!parsed.isValid()) throw new Error(`Invalid document date: ${date}`);
+  const year = parsed.year() - (parsed.month() < 3 ? 1 : 0);
+  return `${String(year).slice(-2)}-${String(year + 1).slice(-2)}/`;
 }
-const generateCsv = async (jsonData, fileName) => {
-  // Convert JSON to CSV
-  const csv = jsonToCSV(jsonData);
 
-  //   console.log(csv);
-  // Write CSV to a file
-  fs.writeFile("results/" + fileName + ".csv", csv, (err) => {
-    if (err) {
-      console.error("Error writing CSV file:", err);
-      return false;
-    } else {
-      console.log("CSV file saved successfully");
-      return true;
-    }
-  });
+function refundItem(row) {
+  const quantity = Number(row.Quantity);
+  const amount = Number(row["Tax Exclusive Gross"]);
+  if (quantity > 0 && Number.isFinite(amount)) {
+    return { "Item Name": row["Item Description"], SKU: row.Sku,
+      "Item Type": "goods", "HSN/SAC": row["Hsn/sac"],
+      Quantity: row.Quantity, "Item Price": Math.abs(amount / quantity) };
+  }
+  const shipping = Number(row["Shipping Amount Basis"]) + Number(row["Shipping Promo Discount Basis"]);
+  if (row.Quantity === "0" && Number(row["Principal Amount Basis"]) === 0 &&
+      Number.isFinite(shipping) && shipping !== 0 && Math.abs(amount - shipping) < 0.005) {
+    return { "Item Name": "Shipping refund", SKU: "", "Item Type": "services",
+      "HSN/SAC": "", Quantity: 1, "Item Price": Math.abs(shipping) };
+  }
+  throw new Error(`Cannot convert refund ${row["Credit Note No"]}: invalid quantity or amount`);
+}
+
+const generateCsv = async (jsonData, fileName) => {
+  const csv = jsonData.length ? parse(jsonData) : "";
+  await fs.promises.mkdir("results", { recursive: true });
+  await fs.promises.writeFile("results/" + fileName + ".csv", csv);
 };
 
 const convertInvoice = async (req, res) => {
@@ -127,6 +132,7 @@ const convertInvoice = async (req, res) => {
   const invoices = []; // filtered data
   const creditNotes = []; // filtered data
   const appliedCreditNotes = []; // filtered data
+  const skipped = {};
 
   for (var i = 0; i < source.length; i++) {
     let locationName =
@@ -139,7 +145,7 @@ const convertInvoice = async (req, res) => {
     if (source[i]["Transaction Type"] == "Shipment") {
       var oneRow = {
         "Location Name": locationName,
-        "Invoice Number": "25-26/" + source[i]["Invoice Number"],
+        "Invoice Number": financialYearPrefix(source[i]["Invoice Date"]) + source[i]["Invoice Number"],
         "Invoice Date": moment(new Date(source[i]["Invoice Date"])).format(
           "YYYY-MM-DD",
         ),
@@ -170,11 +176,11 @@ const convertInvoice = async (req, res) => {
     } else if (source[i]["Transaction Type"] == "Refund") {
       var oneRow = {
         "Location Name": locationName,
-        "Credit Note Number": "25-26/" + source[i]["Credit Note No"],
+        "Credit Note Number": financialYearPrefix(source[i]["Credit Note Date"]) + source[i]["Credit Note No"],
         "Credit Note Date": moment(
           new Date(source[i]["Credit Note Date"]),
         ).format("YYYY-MM-DD"),
-        "Invoice#": "25-26/" + source[i]["Invoice Number"],
+        "Invoice#": financialYearPrefix(source[i]["Invoice Date"]) + source[i]["Invoice Number"],
         "Place of Supply": await stateCodeGenerater(source[i]["Ship To State"]),
         "Credit Note Status": "Open",
         Reason: "Sales Return",
@@ -187,22 +193,15 @@ const convertInvoice = async (req, res) => {
         "GST Identification Number (GSTIN)": source[i]["Customer Bill To Gstid"]
           ? source[i]["Customer Bill To Gstid"]
           : "",
-        "Item Name": source[i]["Item Description"],
-        SKU: source[i]["Sku"],
-        "Item Type": "goods",
-        "HSN/SAC": source[i]["Hsn/sac"],
-        Quantity: source[i]["Quantity"],
-        "Item Price": Math.abs(
-          source[i]["Tax Exclusive Gross"] / source[i]["Quantity"],
-        ),
+        ...refundItem(source[i]),
       };
 
       var creditRow = {
-        "Credit Note Number": "25-26/" + source[i]["Credit Note No"],
+        "Credit Note Number": financialYearPrefix(source[i]["Credit Note Date"]) + source[i]["Credit Note No"],
         Date: moment(new Date(source[i]["Credit Note Date"])).format(
           "YYYY-MM-DD",
         ),
-        "Invoice Number": "25-26/" + source[i]["Invoice Number"],
+        "Invoice Number": financialYearPrefix(source[i]["Invoice Date"]) + source[i]["Invoice Number"],
         "Associated Invoice Date": moment(
           new Date(source[i]["Invoice Date"]),
         ).format("YYYY-MM-DD"),
@@ -211,6 +210,9 @@ const convertInvoice = async (req, res) => {
       };
       appliedCreditNotes.push(creditRow);
       creditNotes.push(oneRow);
+    } else {
+      const type = source[i]["Transaction Type"];
+      skipped[type] = (skipped[type] || 0) + 1;
     }
   }
 
@@ -218,15 +220,23 @@ const convertInvoice = async (req, res) => {
   await generateCsv(creditNotes, "CreditNotes");
   await generateCsv(appliedCreditNotes, "AppliedCreditNotes");
 
-  res.sendStatus(200);
+  res.json({ invoiceRows: invoices.length, creditNoteRows: creditNotes.length,
+    appliedCreditNoteRows: appliedCreditNotes.length, skipped });
 };
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
 });
 
-app.post("/", upload.single("file"), [amazonInvoiceCheck], convertInvoice);
+app.post("/", upload.single("file"), [amazonInvoiceCheck], (req, res, next) => {
+  convertInvoice(req, res).catch(next);
+});
+app.use((error, req, res, next) => {
+  res.status(400).json({ errors: [error.message] });
+});
 
-app.listen(port, () => {
+if (require.main === module) app.listen(port, () => {
   console.log(`Invoice converter app listening at http://localhost:${port}`);
 });
+
+module.exports = { app, financialYearPrefix, refundItem };
